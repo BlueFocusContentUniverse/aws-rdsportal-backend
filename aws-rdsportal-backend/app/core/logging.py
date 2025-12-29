@@ -17,7 +17,6 @@ from typing import Optional
 import structlog
 from structlog.types import EventDict, Processor
 
-import logging
 from app.core.config import get_settings
 
 # 请求 ID 上下文变量
