@@ -22,3 +22,72 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# ======================
+# Python
+# ======================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.egg
+*.egg-info/
+dist/
+build/
+*.manifest
+*.spec
+*.log
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+pip-wheel-metadata/
+*.egg-info/
+
+# mypy cache
+.mypy_cache/
+
+# Ruff cache
+.ruff_cache/
+
+# Pytest cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ======================
+# VSCode / JetBrains
+# ======================
+.vscode/
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# ======================
+# Node / Frontend
+# ======================
+node_modules/
+dist/
+frontend/node_modules/
+frontend/dist/
+
+# npm / pnpm / yarn lock files
+# 可选，团队决定是否提交
+# package-lock.json
+# pnpm-lock.yaml
+# yarn.lock
+
+# ======================
+# Environment files
+# ======================
+.env
+.env.*
+
