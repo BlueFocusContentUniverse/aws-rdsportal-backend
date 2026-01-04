@@ -6,9 +6,10 @@
 - AWS Secrets Manager 注入的数据库环境变量
 """
 
+import os
+import urllib.parse
 from pathlib import Path
 from typing import Optional, List
-import urllib.parse
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,8 +39,6 @@ class Settings(BaseSettings):
         description="CORS 允许的源",
     )
 
-
-
     # ===== Database =====
     # 方式一：完整 DATABASE_URL（本地 / Parameter Store）
     DATABASE_URL: str = Field(default="", description="PostgreSQL 数据库连接 URL")
@@ -62,12 +61,20 @@ class Settings(BaseSettings):
 # 全局配置实例（懒加载）
 _settings: Optional[Settings] = None
 
+
 def get_settings() -> Settings:
     """获取配置实例（懒加载）"""
     global _settings
 
     if _settings is None:
+        print("[CONFIG] 初始化 Settings（env / .env）")
         _settings = Settings()
+
+    print(
+        "[CONFIG] 基础状态:",
+        "ENVIRONMENT=", _settings.ENVIRONMENT,
+        "USE_AWS_PARAMETER_STORE=", _settings.USE_AWS_PARAMETER_STORE,
+    )
 
     # ===== 环境约束 =====
     if _settings.ENVIRONMENT in ("production", "staging"):
@@ -79,6 +86,8 @@ def get_settings() -> Settings:
 
     # ===== Parameter Store =====
     if _settings.USE_AWS_PARAMETER_STORE:
+        print("[CONFIG] 尝试从 AWS Parameter Store 加载数据库配置")
+
         from app.core.aws_params import load_parameters_from_aws_sync
 
         params = load_parameters_from_aws_sync(
@@ -91,24 +100,46 @@ def get_settings() -> Settings:
                 "[CONFIG ERROR] 未能从 AWS Parameter Store 加载数据库配置"
             )
 
-        if "database_url" in params:
+        print("[CONFIG] Parameter Store 返回 keys:", list(params.keys()))
+
+        if "database_url" in params and params["database_url"]:
             _settings.DATABASE_URL = params["database_url"]
+            print("[CONFIG] DATABASE_URL 已从 Parameter Store 设置")
+        else:
+            print("[CONFIG] Parameter Store 中未找到有效的 database_url")
 
     # ===== Secrets Manager 构建 DATABASE_URL（优先级最高）=====
     if _settings.DB_HOST and _settings.DB_PASSWORD:
-        encoded_password = urllib.parse.quote(
-            _settings.DB_PASSWORD, safe=""
-        )
+        print("[CONFIG] 检测到 Secrets Manager 注入的 DB_HOST / DB_PASSWORD")
+
+        encoded_password = urllib.parse.quote(_settings.DB_PASSWORD, safe="")
         _settings.DATABASE_URL = (
             f"postgresql://{_settings.DB_USERNAME}:{encoded_password}"
             f"@{_settings.DB_HOST}:{_settings.DB_PORT}/{_settings.DB_NAME}"
             f"?sslmode=require"
         )
 
-    # ===== 最终校验 =====
+        print("[CONFIG] DATABASE_URL 已由 Secrets Manager 构建")
+
+    else:
+        print(
+            "[CONFIG] Secrets Manager 条件未满足:",
+            "DB_HOST=", bool(_settings.DB_HOST),
+            "DB_PASSWORD=", bool(_settings.DB_PASSWORD),
+        )
+
+    # ===== 最终兜底 / 校验 =====
     if not _settings.DATABASE_URL:
+        print("[CONFIG WARNING] DATABASE_URL 仍为空，准备进入 fallback 逻辑")
+
+        # 生产 / 预发环境禁止 fallback
+        if _settings.ENVIRONMENT in ("production", "staging"):
+            raise RuntimeError(
+                "[CONFIG ERROR] DATABASE_URL 未配置。"
+                "生产 / 预发环境必须通过 Parameter Store 或 Secrets Manager 提供"
+            )
+
         BASE_DIR = Path(__file__).resolve().parent.parent.parent
-        # ===== 本地 .env fallback（字段拼接）=====
         env_file = BASE_DIR / f".env.{_settings.ENVIRONMENT}"
 
         if not env_file.exists():
@@ -122,8 +153,19 @@ def get_settings() -> Settings:
 
         load_dotenv(env_file, override=True)
 
-        # 重新读取配置（拿到 DB_* 字段）
-        _settings = Settings()
+        # 只补字段，不重建 Settings
+        _settings.DB_HOST = _settings.DB_HOST or os.getenv("DB_HOST", "")
+        _settings.DB_PORT = _settings.DB_PORT or os.getenv("DB_PORT", "5432")
+        _settings.DB_USERNAME = _settings.DB_USERNAME or os.getenv("DB_USERNAME", "")
+        _settings.DB_PASSWORD = _settings.DB_PASSWORD or os.getenv("DB_PASSWORD", "")
+        _settings.DB_NAME = _settings.DB_NAME or os.getenv("DB_NAME", "postgres")
+
+        print(
+            "[CONFIG] Fallback DB 字段:",
+            "DB_HOST=", bool(_settings.DB_HOST),
+            "DB_USERNAME=", bool(_settings.DB_USERNAME),
+            "DB_PASSWORD=", bool(_settings.DB_PASSWORD),
+        )
 
         if not (_settings.DB_HOST and _settings.DB_USERNAME and _settings.DB_PASSWORD):
             raise RuntimeError(
@@ -131,16 +173,13 @@ def get_settings() -> Settings:
             )
 
         encoded_password = urllib.parse.quote(_settings.DB_PASSWORD, safe="")
-
         _settings.DATABASE_URL = (
             f"postgresql://{_settings.DB_USERNAME}:{encoded_password}"
             f"@{_settings.DB_HOST}:{_settings.DB_PORT}/{_settings.DB_NAME}"
             f"?sslmode=require"
         )
 
-        # raise RuntimeError(
-                #     "[CONFIG ERROR] DATABASE_URL 未配置。"
-                #     "请通过 Parameter Store 或 Secrets Manager 提供数据库连接信息"
-                # )
-    print("URL : " + _settings.DATABASE_URL)
+        print("[CONFIG] DATABASE_URL 已由本地 .env fallback 构建")
+
+    print("[CONFIG] 最终 DATABASE_URL =", _settings.DATABASE_URL)
     return _settings
